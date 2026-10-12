@@ -1,0 +1,7 @@
+# Patterns are relative to rootDir (src). Upload only these five files.
+**/**
+!Code.gs
+!Index.html
+!Styles.html
+!Client.html
+!appsscript.json

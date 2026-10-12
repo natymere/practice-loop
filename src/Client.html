@@ -1,0 +1,522 @@
+<script>
+  // Only this bridge calls Apps Script. The server owns identity, dates and writes.
+  const APP_URL = 'https://script.google.com/macros/s/AKfycbzkMFpJlVf5BfE47dDyUTWHc8TvdaW9qlJta5dNPWPS8XEgrOJeMNiXkY5RHcwaynSCeQ/exec';
+  const ui = {
+    data: null,
+    view: 'today',
+    busy: false,
+    refreshRequired: false,
+    search: '',
+    filter: 'active',
+    collection: '',
+    topic: '',
+    listRequest: 0,
+    epoch: 0
+  };
+  // Retain the original payload after an uncertain response, for a safe retry.
+  const pendingReviews = new Map();
+  const $ = id => document.getElementById(id);
+  const slot = (root, name) => root.querySelector(`[data-slot="${name}"]`);
+
+  function hasGoogleBridge() {
+    return typeof google !== 'undefined' && Boolean(google.script && google.script.run);
+  }
+
+  function api(name, input) {
+    return new Promise((resolve, reject) => {
+      if (!hasGoogleBridge()) {
+        reject(new Error('Open the Google-hosted app to use your Sheet.'));
+        return;
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[name](input);
+    });
+  }
+
+  function safeLink(value) {
+    try {
+      const url = new URL(value);
+      return ['https:', 'http:'].includes(url.protocol) ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function hostLabel(value) {
+    const url = safeLink(value);
+    return url ? new URL(url).hostname.replace(/^www\./, '') : 'Question link needs repair';
+  }
+
+  function dateLabel(day) {
+    return new Date(day + 'T12:00:00').toLocaleDateString(undefined, {
+      weekday: 'long', month: 'short', day: 'numeric'
+    });
+  }
+
+  function isDue(question) {
+    return question.status === 'active' && Boolean(question.due) && question.due <= ui.data.today &&
+      (!question.snoozedUntil || question.snoozedUntil <= ui.data.today);
+  }
+
+  function feedback(target, message, error = false) {
+    target.textContent = message;
+    target.hidden = !message;
+    target.classList.toggle('error', error);
+  }
+
+  function addReload(target) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Reload';
+    button.onclick = () => location.reload();
+    target.appendChild(button);
+  }
+
+  function template(name) {
+    return $(name + '-template').content.firstElementChild.cloneNode(true);
+  }
+
+  function navigate(view) {
+    if (ui.busy || !ui.data || ui.refreshRequired) return;
+    ui.view = view;
+    ui.listRequest++; 
+    feedback($('toast'), '');
+    render();
+    $('page-title').focus();
+    window.scrollTo(0, 0);
+  }
+
+  async function render() {
+    const epoch = ++ui.epoch;
+    document.querySelectorAll('[data-view]').forEach(button => {
+      button.disabled = false;
+      if (button.dataset.view === ui.view) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    });
+    const screen = template(ui.view);
+    $('content').replaceChildren(screen);
+    const renderers = { today: renderToday, library: renderLibrary, add: renderAdd, settings: renderSettings };
+    try {
+      await renderers[ui.view](screen);
+    } catch (error) {
+      if (epoch !== ui.epoch || !screen.isConnected) return;
+      feedback($('toast'), error.message || 'Could not load this view.', true);
+      addReload($('toast'));
+    }
+  }
+
+  // Never retry a write automatically. Keep failed forms intact for the user.
+  async function save({ scope, task, message, nextView, afterRender }) {
+    if (ui.busy || ui.refreshRequired) return;
+    ui.busy = true;
+    ui.listRequest++;
+    const localFeedback = scope.querySelector('[data-feedback]') || scope;
+    feedback(localFeedback, 'Saving…');
+    feedback($('toast'), '');
+    scope.setAttribute('aria-busy', 'true');
+    const controls = [...document.querySelectorAll('button, input, select, textarea')];
+    const disabledBefore = controls.map(control => control.disabled);
+    controls.forEach(control => { control.disabled = true; });
+    let saved = false;
+    try {
+      const result = await task();
+      saved = true;
+      ui.data = await api('getDashboard');
+      if (nextView) ui.view = typeof nextView === 'function' ? nextView(result) : nextView;
+      await render();
+      const text = typeof message === 'function' ? message(result) : message;
+      feedback($('toast'), afterRender ? '' : text);
+      if (afterRender) await afterRender(result, text);
+      else $('toast').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } catch (error) {
+      const text = saved
+        ? 'Saved, but this page could not refresh. Reload before continuing.'
+        : (error.message || 'Could not confirm the save. Retry the same action or reload.');
+      feedback(localFeedback, text, true);
+      addReload(localFeedback);
+      localFeedback.setAttribute('tabindex', '-1');
+      localFeedback.focus();
+      if (saved) ui.refreshRequired = true;
+    } finally {
+      scope.removeAttribute('aria-busy');
+      controls.forEach((control, index) => { control.disabled = disabledBefore[index]; });
+      ui.busy = false;
+      if (ui.refreshRequired) {
+        document.querySelectorAll('[data-view]').forEach(button => { button.disabled = true; });
+      }
+    }
+  }
+
+  function renderToday(root) {
+    const data = ui.data;
+    slot(root, 'date').textContent = dateLabel(data.today);
+    slot(root, 'due-count').textContent = data.dueCount;
+    slot(root, 'session-time').textContent = data.sessionMinutes + ' min';
+    slot(root, 'budget').textContent = data.settings.dailyBudget + ' min';
+    data.questions.forEach(question => slot(root, 'questions').appendChild(questionCard(question)));
+    slot(root, 'queue-heading').hidden = !data.questions.length;
+    slot(root, 'empty').hidden = Boolean(data.questions.length);
+    const hasQuestions = data.practiceCount + data.bankCount > 0;
+    slot(root, 'empty-title').textContent = hasQuestions ? "You're up to date" : 'Start with one question';
+    slot(root, 'empty-description').textContent = hasQuestions
+      ? 'Nothing is due right now. Browse your practice or question bank in Library.'
+      : 'Save a question you studied. It will return tomorrow.';
+    const emptyAction = root.querySelector('[data-action="empty-action"]');
+    emptyAction.textContent = hasQuestions ? 'Browse Library' : 'Add a question';
+    emptyAction.onclick = () => navigate(hasQuestions ? 'library' : 'add');
+    const toggle = root.querySelector('[data-action="toggle-all"]');
+    toggle.hidden = data.dueCount <= data.questions.length;
+    toggle.textContent = `Browse all ${data.dueCount} due`;
+    toggle.onclick = () => { ui.filter = 'due'; ui.search = ''; ui.collection = ''; ui.topic = ''; navigate('library'); };
+    const reminder = root.querySelector('[data-action="reminders"]');
+    reminder.textContent = data.settings.channel === 'off' ? 'Reminders are off · Set up email or Telegram'
+      : `${data.settings.channel === 'email' ? 'Email' : 'Telegram'} reminders on · Manage`;
+    reminder.onclick = () => navigate('settings');
+  }
+
+  function fillOptions(select, values, emptyLabel, selected) {
+    select.replaceChildren();
+    [ ['', emptyLabel], ...values.map(value => [value, value]) ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    select.value = selected;
+  }
+
+  async function renderLibrary(root) {
+    const search = root.querySelector('#search'), view = root.querySelector('#status-filter');
+    const collection = root.querySelector('#collection-filter'), topic = root.querySelector('#topic-filter');
+    if (ui.filter === 'due') {
+      const option = document.createElement('option');
+      option.value = 'due'; option.textContent = 'Due now'; view.appendChild(option);
+    }
+    search.value = ui.search;
+    view.value = ui.filter;
+    let nextOffset = null, timer;
+    const more = root.querySelector('[data-action="load-more"]');
+    const target = slot(root, 'list-feedback');
+    async function load(offset = 0, ticket = ++ui.listRequest) {
+      more.disabled = true;
+      feedback(target, 'Loading questions…');
+      try {
+        const page = await api('getQuestions', {view:ui.filter, search:ui.search,
+          collection:ui.collection, topic:ui.topic, offset});
+        if (ticket !== ui.listRequest || !root.isConnected) return;
+        const cards = page.questions.map(questionCard);
+        if (offset === 0) slot(root, 'questions').replaceChildren(...cards);
+        else slot(root, 'questions').append(...cards);
+        fillOptions(collection, page.collections, 'All collections', ui.collection);
+        fillOptions(topic, page.topics, 'All topics', ui.topic);
+        nextOffset = page.nextOffset;
+        more.hidden = nextOffset === null;
+        more.disabled = false;
+        slot(root, 'library-count').textContent = `${page.total} ${page.total === 1 ? 'question' : 'questions'}`;
+        slot(root, 'empty').hidden = page.total !== 0;
+        feedback(target, '');
+      } catch (error) {
+        if (ticket !== ui.listRequest || !root.isConnected) return;
+        feedback(target, error.message || 'Could not load questions.', true);
+        const retry = document.createElement('button');
+        retry.textContent = 'Try again'; retry.onclick = () => load(offset);
+        target.appendChild(retry);
+      }
+    }
+    function changed(delay) {
+      clearTimeout(timer);
+      ui.search = search.value; ui.filter = view.value;
+      ui.collection = collection.value; ui.topic = topic.value;
+      // Invalidate immediately, not after debounce, so old results cannot repaint.
+      const ticket = ++ui.listRequest;
+      slot(root, 'questions').replaceChildren();
+      slot(root, 'empty').hidden = true;
+      more.hidden = true;
+      feedback(target, 'Loading questions…');
+      timer = setTimeout(() => { if (root.isConnected && ticket === ui.listRequest) load(0, ticket); }, delay);
+    }
+    search.oninput = () => changed(300);
+    view.onchange = () => { collection.value = ''; topic.value = ''; changed(0); };
+    collection.onchange = topic.onchange = () => changed(0);
+    more.onclick = () => { if (nextOffset !== null && !ui.busy) load(nextOffset); };
+    await load();
+  }
+
+  function changeQuestion(question, action, scope, values = {}) {
+    const target = scope.querySelector('[data-feedback]') || scope;
+    if (pendingReviews.has(question.id)) {
+      feedback(target, 'An attempt may already be saved. Retry it or reload first.', true);
+      addReload(target);
+      return;
+    }
+    const messages = {
+      snooze:'Moved to tomorrow.', delete:'Question deleted. Restore it from Library → Deleted.',
+      restore:'Question restored to its previous location.', notes:'Notes saved.'
+    };
+    save({scope, task:() => api('updateQuestion', {id:question.id, revision:question.revision, action, ...values}),
+      message:result => messages[action] || 'Saved. Review again ' + dateLabel(result.question.due) + '.'});
+  }
+
+  function questionCard(initialQuestion) {
+    let question = initialQuestion;
+    const card = template('question');
+    card.dataset.questionId = question.id;
+    slot(card, 'title').textContent = question.title;
+    slot(card, 'source').textContent = `${hostLabel(question.url)} · ${question.minutes} min`;
+    let status = question.due ? 'Due ' + dateLabel(question.due) : 'Question bank';
+    if (question.status === 'deleted') status = 'Deleted';
+    else if (question.status === 'bank') status = 'Question bank';
+    else if (question.snoozedUntil > ui.data.today) status = 'Snoozed to ' + dateLabel(question.snoozedUntil);
+    else if (question.due < ui.data.today) status = 'Ready to review';
+    else if (question.due === ui.data.today) status = 'Due today';
+    slot(card, 'status').textContent = status;
+    const url = safeLink(question.url), link = slot(card, 'link');
+    link.hidden = !url; if (url) link.href = url;
+    slot(card, 'broken-link').hidden = Boolean(url);
+    const cardFeedback = card.querySelector('[data-card-feedback]');
+    const record = card.querySelector('[data-action="record"]');
+    const host = slot(card, 'review-host');
+    record.hidden = !isDue(question);
+    record.setAttribute('aria-controls', 'review-' + question.id);
+    host.id = 'review-' + question.id;
+    host.hidden = true;
+    record.onclick = () => {
+      if (!host.firstElementChild) {
+        const form = template('review');
+        form.elements.minutes.value = question.minutes;
+        form.onsubmit = event => {
+          event.preventDefault();
+          if (event.submitter) submitReview(question, form, event.submitter.value);
+        };
+        host.appendChild(form);
+      }
+      host.hidden = !host.hidden;
+      record.setAttribute('aria-expanded', String(!host.hidden));
+      record.textContent = host.hidden ? 'Record attempt' : 'Close attempt';
+      if (!host.hidden) host.querySelector('input').focus();
+    };
+    const statusButton = card.querySelector('[data-action="status"]');
+    statusButton.hidden = false;
+    if (question.status === 'bank') {
+      statusButton.textContent = 'Add to practice';
+      statusButton.onclick = () => { card.querySelector('details').open = true; };
+    } else if (question.status === 'deleted') {
+      statusButton.textContent = 'Restore';
+      statusButton.onclick = () => changeQuestion(question, 'restore', cardFeedback);
+    } else {
+      statusButton.textContent = 'Tomorrow instead';
+      statusButton.hidden = !isDue(question);
+      statusButton.onclick = () => changeQuestion(question, 'snooze', cardFeedback);
+    }
+    const deleteButton = card.querySelector('[data-action="delete"]');
+    const deletePanel = slot(card, 'delete-panel');
+    deleteButton.hidden = ui.view !== 'library' || question.status === 'deleted';
+    deleteButton.onclick = () => { deletePanel.hidden = false; card.querySelector('[data-action="cancel-delete"]').focus(); };
+    card.querySelector('[data-action="cancel-delete"]').onclick = () => { deletePanel.hidden = true; deleteButton.focus(); };
+    card.querySelector('[data-action="confirm-delete"]').onclick = () => changeQuestion(question, 'delete', deletePanel);
+    const details = card.querySelector('details'), detailsHost = slot(card, 'details-host');
+    let detailsLoading = false;
+    async function loadDetails() {
+      if (detailsLoading || detailsHost.dataset.loaded) return;
+      detailsLoading = true;
+      const target = document.createElement('div'); target.className = 'feedback'; target.setAttribute('role', 'status');
+      detailsHost.replaceChildren(target);
+      feedback(target, 'Loading notes and stage…');
+      try {
+        const response = await api('getQuestionDetails', {id:question.id});
+        if (!card.isConnected) return;
+        // Another tab changed the card: replace all controls with its fresh revision.
+        if (response.question.revision !== question.revision) {
+          const freshCard = questionCard(response.question);
+          card.replaceWith(freshCard);
+          freshCard.querySelector('details').open = true;
+          return;
+        }
+        const body = template('details');
+        slot(body, 'topic').textContent = [question.topic || 'No topic', question.collection, `Stage ${question.stage + 1} of 7`].filter(Boolean).join(' · ');
+        const stageForm = slot(body, 'stage-form');
+        stageForm.hidden = question.status === 'deleted';
+        response.stageOptions.forEach(item => {
+          const option = document.createElement('option'); option.value = item.stage;
+          option.textContent = `Stage ${item.stage} · ${item.days} ${item.days === 1 ? 'day' : 'days'}`;
+          stageForm.elements.stage.appendChild(option);
+        });
+        stageForm.elements.stage.value = question.stage + 1;
+        const activate = question.status === 'bank';
+        slot(body, 'stage-heading').textContent = activate ? 'Add to practice' : 'Change stage';
+        slot(body, 'stage-save').textContent = activate ? 'Add to practice' : 'Save stage';
+        function preview() {
+          const selected = response.stageOptions.find(item => item.stage === Number(stageForm.elements.stage.value));
+          slot(body, 'stage-preview').textContent = 'Next review: ' + dateLabel(selected.due) + '.';
+        }
+        stageForm.elements.stage.onchange = preview;
+        body.querySelector('[data-action="reset-stage"]').onclick = () => { stageForm.elements.stage.value = '1'; preview(); };
+        preview();
+        stageForm.onsubmit = event => {
+          event.preventDefault();
+          changeQuestion(question, activate ? 'activate' : 'stage', stageForm, {stage:Number(stageForm.elements.stage.value)});
+        };
+        const notesForm = slot(body, 'notes-form');
+        notesForm.elements.notes.value = response.question.notes;
+        notesForm.elements.notes.readOnly = question.status === 'deleted';
+        notesForm.querySelector('button').hidden = question.status === 'deleted';
+        notesForm.onsubmit = event => { event.preventDefault(); changeQuestion(question, 'notes', notesForm, {notes:notesForm.elements.notes.value}); };
+        const history = slot(body, 'history');
+        const results = {help:'Needed help', hard:'Solved with difficulty', independent:'Solved independently'};
+        if (!response.history.length) { history.textContent = 'No reviews yet.'; history.className = 'hint'; }
+        response.history.forEach(review => {
+          const entry = document.createElement('div'); entry.className = 'history-entry';
+          const label = document.createElement('span'); label.className = 'meta'; label.textContent = new Date(review.at).toLocaleDateString() + ' · ' + (results[review.result] || review.result);
+          const note = document.createElement('p'); note.textContent = review.note;
+          entry.appendChild(label); if (review.note) entry.appendChild(note); history.appendChild(entry);
+        });
+        detailsHost.replaceChildren(body); detailsHost.dataset.loaded = 'true';
+      } catch (error) {
+        feedback(target, error.message || 'Could not load this question.', true);
+        const retry = document.createElement('button'); retry.textContent = 'Try again'; retry.onclick = loadDetails; target.appendChild(retry);
+      } finally { detailsLoading = false; }
+    }
+    details.ontoggle = () => { if (details.open) loadDetails(); };
+    return card;
+  }
+
+  function submitReview(question, form, result) {
+    const target = form.querySelector('[data-feedback]');
+    const minutes = Number(form.elements.minutes.value);
+    const note = form.elements.note.value.trim();
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 360) {
+      feedback(target, 'Enter a whole number from 0 to 360 minutes.', true);
+      return;
+    }
+    let payload = pendingReviews.get(question.id);
+    if (payload && (payload.result !== result || payload.minutes !== minutes || payload.note !== note)) {
+      feedback(target, 'The previous attempt may already be saved. Retry the same result or reload.', true);
+      addReload(target);
+      return;
+    }
+    if (!payload) {
+      payload = {id:question.id, revision:question.revision, requestId:crypto.randomUUID(), result, minutes, note};
+      pendingReviews.set(question.id, payload);
+    }
+    save({scope:form, task:async () => {
+      const response = await api('recordReview', payload);
+      pendingReviews.delete(question.id);
+      return response;
+    }, message:response => 'Saved. Review again ' + dateLabel(response.due) + '.'});
+  }
+
+  function renderAdd(root) {
+    const form = root.querySelector('form');
+    form.onsubmit = event => {
+      event.preventDefault();
+      const fields = form.elements;
+      const input = {
+        url: fields.url.value, title: fields.title.value, topic: fields.topic.value,
+        minutes: Number(fields.minutes.value), initialHelp: fields.initialHelp.value === 'true', notes: fields.notes.value
+      };
+      // A duplicate is useful feedback, not a navigation or a reset of the form.
+      save({scope:form, task:async () => {
+        const result = await api('addQuestion', input);
+        if (result.duplicate) throw new Error(result.deleted
+          ? 'This question is in Deleted: ' + result.title + '. Restore it from Library → Deleted.'
+          : result.status === 'bank' ? 'Already in your question bank: ' + result.title + '. Choose Add to practice from Library.'
+          : 'Already in your Library: ' + result.title + '. Its schedule is unchanged.');
+        return result;
+      }, nextView:'today', message:result => 'Saved. First review ' + dateLabel(result.due) + '.'});
+    };
+  }
+
+  async function renderSettings(root) {
+    const loading = slot(root, 'settings-feedback');
+    root.querySelector('#settings-form').hidden = true;
+    root.querySelector('.import-panel').hidden = true;
+    feedback(loading, 'Loading settings…');
+    const data = await api('getSettings');
+    if (!root.isConnected) return;
+    feedback(loading, '');
+    root.querySelector('#settings-form').hidden = false;
+    root.querySelector('.import-panel').hidden = false;
+    const form = root.querySelector('form');
+    const fields = form.elements;
+    const settings = data.settings;
+    fields.budget.value = settings.dailyBudget;
+    fields.channel.value = settings.channel;
+    slot(root, 'reminder-status').textContent = settings.channel === 'off'
+      ? 'Currently off. Your review schedule still runs.'
+      : `${settings.channel === 'email' ? 'Email' : 'Telegram'} reminders are enabled.`;
+    for (let hour = 0; hour < 24; hour++) {
+      const option = document.createElement('option');
+      option.value = hour;
+      option.textContent = String(hour).padStart(2, '0') + ':00';
+      fields.hour.appendChild(option);
+    }
+    fields.hour.value = settings.reminderHour;
+    slot(root, 'timezone').textContent = settings.timezone + '. Sent within the selected hour.';
+    const telegram = slot(root, 'telegram-help');
+    telegram.textContent = data.telegramConfigured
+      ? 'Telegram is connected. Reminders arrive on days with questions due.'
+      : 'In Apps Script → Project Settings → Script Properties, add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Start a chat with your bot first.';
+    function channelChanged() {
+      telegram.hidden = fields.channel.value !== 'telegram';
+      slot(root, 'email-help').hidden = fields.channel.value !== 'email';
+      slot(root, 'reminder-hour').hidden = fields.channel.value === 'off';
+    }
+    fields.channel.onchange = channelChanged;
+    channelChanged();
+    form.onsubmit = event => {
+      event.preventDefault();
+      save({scope:form, task:() => api('saveSettings', {
+        dailyBudget:Number(fields.budget.value), reminderHour:Number(fields.hour.value), channel:fields.channel.value
+      }), message:'Settings saved.', afterRender:(_, text) => {
+        feedback($('settings-form').querySelector('[data-feedback]'), text);
+      }});
+    };
+    const importPanel = root.querySelector('.import-panel');
+    const importUrl = safeLink(data.importUrl);
+    slot(root, 'import-link').hidden = !importUrl;
+    if (importUrl) slot(root, 'import-link').href = importUrl;
+    slot(root, 'import-setup').hidden = Boolean(importUrl);
+    root.querySelector('[data-action="import"]').disabled = !importUrl;
+    root.querySelector('[data-action="import"]').onclick = () => save({scope:importPanel,
+      task:() => api('importQuestions'),
+      message:result => `${result.imported} added to your question bank, ${result.duplicates} already saved, ${result.errors} errors. See the Import tab for row results.`
+    });
+    const delivery = data.lastDelivery;
+    slot(root, 'delivery').textContent = delivery
+      ? `${delivery.status} · ${new Date(delivery.at).toLocaleString()}\n${delivery.detail}`
+      : 'No delivery attempts yet.';
+    const url = safeLink(data.sheetUrl);
+    slot(root, 'sheet-link').hidden = !url;
+    if (url) slot(root, 'sheet-link').href = url;
+  }
+
+  async function start() {
+    document.querySelectorAll('[data-view]').forEach(button => {
+      button.onclick = () => navigate(button.dataset.view);
+    });
+    if (!hasGoogleBridge()) {
+      document.querySelector('.site-header').hidden = true;
+      $('loading').replaceChildren();
+      const title = document.createElement('h1');
+      title.textContent = 'Open Practice Loop online';
+      const explanation = document.createElement('p');
+      explanation.textContent = 'This is the source file. Your questions are in the private Google-hosted app.';
+      const link = document.createElement('a');
+      link.href = APP_URL;
+      link.textContent = 'Open my practice app';
+      $('loading').append(title, explanation, link);
+      return;
+    }
+    try {
+      ui.data = await api('getDashboard');
+      $('loading').hidden = true;
+      $('content').hidden = false;
+      render();
+    } catch (error) {
+      $('loading').hidden = true;
+      feedback($('toast'), error.message || 'Could not load your questions. Please try again.', true);
+      addReload($('toast'));
+    }
+  }
+
+  start();
+</script>

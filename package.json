@@ -1,0 +1,22 @@
+{
+  "name": "practice-loop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private Google Sheets and Apps Script practice tracker",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node tests/test.mjs --focused",
+    "test:all": "node tests/test.mjs",
+    "check:staged": "node scripts/check-staged.mjs",
+    "source:login": "clasp login",
+    "source:status": "clasp show-file-status",
+    "source:push": "npm test && npm run source:status && clasp push",
+    "clasp": "clasp"
+  },
+  "devDependencies": {
+    "@google/clasp": "3.4.1"
+  }
+}

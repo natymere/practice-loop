@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?!= include_('Styles'); ?>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand"><span aria-hidden="true" class="brand-mark"></span>Practice Loop</div>
+        <button class="primary add-button" data-view="add" disabled>+ Add question</button>
+        <nav aria-label="Main navigation">
+          <button data-view="today" aria-current="page" disabled>Today</button>
+          <button data-view="library" disabled>Library</button>
+        </nav>
+        <button class="quiet settings-button" data-view="settings" disabled>Settings</button>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <div id="toast" class="feedback" role="status" aria-live="polite" hidden></div>
+      <section id="loading" class="empty" aria-live="polite">
+        <p class="eyebrow">Your practice, at your pace</p>
+        <h1>Loading your questions…</h1>
+        <p class="muted">Checking your review schedule.</p>
+      </section>
+      <div id="content" hidden></div>
+      <footer>Try it from memory. Then record how it went.</footer>
+      <noscript>Enable JavaScript to use your private practice app.</noscript>
+    </main>
+
+    <template id="today-template">
+      <section aria-labelledby="page-title">
+        <div class="page-heading">
+          <p class="eyebrow" data-slot="date"></p>
+          <h1 id="page-title" tabindex="-1">Today</h1>
+          <p class="muted">A few questions. A little more remembered.</p>
+        </div>
+        <div class="session-summary" aria-label="Session summary">
+          <div><strong data-slot="due-count"></strong><span>due for review</span></div>
+          <div><strong data-slot="session-time"></strong><span>suggested session</span></div>
+          <div><strong data-slot="budget"></strong><span>daily budget</span></div>
+        </div>
+        <div class="section-heading" data-slot="queue-heading">
+          <h2 data-slot="queue-title">Your session</h2>
+          <button class="quiet" data-action="toggle-all" hidden>Show all due</button>
+        </div>
+        <div class="question-list" data-slot="questions"></div>
+        <section class="empty" data-slot="empty" hidden>
+          <div class="empty-mark" aria-hidden="true">✓</div>
+          <h2 data-slot="empty-title">You're up to date</h2>
+          <p class="muted" data-slot="empty-description"></p>
+          <button class="secondary" data-action="empty-action">Browse Library</button>
+        </section>
+        <button class="quiet reminder-shortcut" data-action="reminders"></button>
+        
+      </section>
+    </template>
+
+    <template id="library-template">
+      <section aria-labelledby="page-title">
+        <div class="page-heading">
+          <p class="eyebrow">Keep what you learn</p>
+          <h1 id="page-title" tabindex="-1">Library</h1>
+          <p class="muted" data-slot="library-count"></p>
+        </div>
+        <div class="toolbar">
+          <div class="field">
+            <label class="sr-only" for="search">Search questions</label>
+            <input id="search" type="search" placeholder="Search title, topic or website">
+          </div>
+          <div class="field">
+            <label class="sr-only" for="status-filter">Library view</label>
+            <select id="status-filter">
+              <option value="active">My practice</option>
+              <option value="bank">Question bank</option>
+              <option value="deleted">Deleted</option>
+            </select>
+          </div>
+          <div class="field"><label class="sr-only" for="collection-filter">Collection</label><select id="collection-filter"><option value="">All collections</option></select></div>
+          <div class="field"><label class="sr-only" for="topic-filter">Topic</label><select id="topic-filter"><option value="">All topics</option></select></div>
+        </div>
+        <div class="feedback" data-slot="list-feedback" role="status" hidden></div>
+        <div class="question-list" data-slot="questions"></div>
+        <button class="secondary load-more" data-action="load-more" hidden>Load more</button>
+        <section class="empty" data-slot="empty" hidden>
+          <h2>No questions found</h2>
+          <p class="muted">Try another search or add a question.</p>
+        </section>
+      </section>
+    </template>
+
+    <template id="add-template">
+      <section class="form-page" aria-labelledby="page-title">
+        <div class="page-heading">
+          <p class="eyebrow">Build your library</p>
+          <h1 id="page-title" tabindex="-1">Add a question</h1>
+          <p class="muted">Save today's practice. Review it tomorrow.</p>
+        </div>
+        <form id="add-form" class="panel form-stack">
+          <div class="field">
+            <label for="url">Question link</label>
+            <input id="url" name="url" type="url" required maxlength="2000" placeholder="https://leetcode.com/problems/…" aria-describedby="url-hint">
+            <p id="url-hint" class="hint">LeetCode, Fastprep or another question website.</p>
+          </div>
+          <div class="field">
+            <label for="title">Title</label>
+            <input id="title" name="title" required maxlength="160" placeholder="e.g. Two Sum">
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="topic">Topic <span class="optional">optional</span></label>
+              <input id="topic" name="topic" maxlength="100" placeholder="e.g. Arrays">
+            </div>
+            <div class="field">
+              <label for="minutes">Review time <span class="unit">minutes</span></label>
+              <input id="minutes" name="minutes" type="number" min="5" max="180" value="20" required aria-describedby="time-hint">
+              <p class="hint" id="time-hint">An estimate to plan your daily session.</p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="initial-help">How did you solve it?</label>
+            <select id="initial-help" name="initialHelp">
+              <option value="true">With a hint or solution</option>
+              <option value="false">Independently</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="question-notes">Notes <span class="optional">optional</span></label>
+            <textarea id="question-notes" name="notes" rows="4" maxlength="5000" placeholder="Key idea, approach or mistake to remember" aria-describedby="notes-hint"></textarea>
+            <p class="hint" id="notes-hint">Hidden during reviews until you reveal them.</p>
+          </div>
+          <div class="form-end">
+            <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+            <button class="primary" type="submit">Save question</button>
+          </div>
+        </form>
+      </section>
+    </template>
+
+    <template id="question-template">
+      <article class="question-card">
+        <div class="question-heading">
+          <div class="question-title"><h2 data-slot="title"></h2><p class="meta" data-slot="source"></p></div>
+          <span class="badge" data-slot="status"></span>
+        </div>
+        <div class="question-actions">
+          <a class="button secondary" data-slot="link" target="_blank" rel="noopener noreferrer">Open question ↗</a>
+          <span class="hint" data-slot="broken-link" hidden>Repair this link in your Sheet.</span>
+          <button class="quiet" data-action="record" aria-expanded="false">Record attempt</button>
+          <button class="quiet push-right" data-action="status" hidden></button>
+          <button class="quiet danger" data-action="delete" hidden>Delete</button>
+        </div>
+        <div class="feedback" data-card-feedback role="status" aria-live="polite" hidden></div>
+        <section class="delete-panel" data-slot="delete-panel" hidden aria-label="Confirm deletion">
+          <h3>Delete this question?</h3>
+          <p class="hint">It will leave your review queue and reminders. Restore it anytime from Library → Deleted.</p>
+          <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+          <div class="question-actions">
+            <button class="danger-button" data-action="confirm-delete">Delete question</button>
+            <button class="secondary" data-action="cancel-delete">Keep question</button>
+          </div>
+        </section>
+        <div data-slot="review-host"></div>
+        <details class="notes-panel">
+          <summary>Notes, history &amp; stage</summary>
+          <div class="disclosure-body" data-slot="details-host"></div>
+        </details>
+      </article>
+    </template>
+
+    <template id="review-template">
+      <form class="review-panel form-stack">
+        <div><h3>How did it go?</h3><p class="hint">Hints and solutions count as help.</p></div>
+        <div class="field short-field"><label>Time spent <span class="unit">minutes</span><input name="minutes" type="number" min="0" max="360" required></label></div>
+        <div class="field"><label>Attempt note <span class="optional">optional</span><textarea name="note" rows="3" maxlength="1500" placeholder="What helped or tripped you up?"></textarea></label></div>
+        <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+        <div class="rating-actions">
+          <button type="submit" value="help">Needed help</button>
+          <button type="submit" value="hard">Solved with difficulty</button>
+          <button type="submit" value="independent" class="primary">Solved independently</button>
+        </div>
+      </form>
+    </template>
+
+    <template id="details-template">
+      <div class="form-stack">
+        <p class="meta" data-slot="topic"></p>
+        <form class="form-stack" data-slot="stage-form">
+          <h3 data-slot="stage-heading">Change stage</h3>
+          <div class="field"><label>Review stage<select name="stage"></select></label><p class="hint" data-slot="stage-preview" aria-live="polite"></p></div>
+          <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+          <div class="rating-actions"><button class="primary" type="submit" data-slot="stage-save">Save stage</button><button type="button" data-action="reset-stage">Reset to stage 1</button></div>
+          <p class="hint">Changes the next review date. Your previous reviews stay intact.</p>
+        </form>
+        <form class="form-stack" data-slot="notes-form">
+          <div class="field"><label>Question notes<textarea name="notes" rows="4" maxlength="5000" placeholder="Key idea, approach or mistake to remember"></textarea></label></div>
+          <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+          <div><button class="secondary" type="submit">Save notes</button></div>
+        </form>
+        <div data-slot="history"></div>
+      </div>
+    </template>
+
+    <template id="settings-template">
+      <section class="form-page" aria-labelledby="page-title">
+        <div class="page-heading">
+          <p class="eyebrow">Make room for practice</p>
+          <h1 id="page-title" tabindex="-1">Settings</h1>
+          <p class="muted">A manageable session and a gentle reminder.</p>
+        </div>
+        <div class="feedback" data-slot="settings-feedback" role="status" hidden></div>
+        <form id="settings-form" class="panel form-stack">
+          <div class="field">
+            <label for="budget">Daily practice budget <span class="unit">minutes</span></label>
+            <input id="budget" name="budget" class="short-input" type="number" min="5" max="240" required aria-describedby="budget-hint">
+            <p class="hint" id="budget-hint">Sets your suggested workload. Review dates stay the same.</p>
+          </div>
+          <div class="field">
+            <h2>Reminders</h2>
+            <p class="hint" data-slot="reminder-status" role="status"></p>
+            <label for="channel">Send reminders through</label>
+            <select id="channel" name="channel" aria-describedby="reminders-hint"><option value="off">Off</option><option value="email">Email to my Google account</option><option value="telegram">Telegram bot</option></select>
+            <p class="hint" id="reminders-hint">Choose a channel and time, then save. One reminder on days with questions due.</p>
+            <p class="hint" data-slot="email-help" hidden>Sent to your Google account on days with questions due.</p>
+          </div>
+          <div class="field" data-slot="reminder-hour" hidden>
+            <label for="hour">Reminder time</label>
+            <select id="hour" name="hour"></select>
+            <p class="hint" data-slot="timezone"></p>
+          </div>
+          <div class="setup-note" data-slot="telegram-help" hidden></div>
+          <div class="form-end">
+            <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+            <button class="primary" type="submit">Save settings</button>
+          </div>
+        </form>
+        <section class="panel settings-detail" aria-labelledby="schedule-title">
+          <h2 id="schedule-title">Review schedule</h2>
+          <div class="disclosure-body">
+            <p class="schedule">1 → 3 → 7 → 14 → 30 → 60 → 90 days</p>
+            <p>Questions added to practice start with a review tomorrow, unless you choose another stage. Each independent review advances to the next gap.</p>
+            <p class="hint">Needed help resets to tomorrow. Solved with difficulty keeps your stage and returns tomorrow. The final gap repeats every 90 days.</p>
+          </div>
+        </section>
+        <details class="panel settings-detail">
+          <summary>Reminder delivery history</summary>
+          <div class="disclosure-body"><p data-slot="delivery"></p><p class="hint">Uncertain deliveries are not retried that day, to avoid duplicates.</p></div>
+        </details>
+        <section class="panel import-panel">
+          <h2>Import a question collection</h2>
+          <p class="hint">Paste Title, URL, Topic and Collection from Excel into the Import tab. Leave Result to the app. Imported questions stay in the question bank until you add them to practice.</p>
+          <a class="sheet-link" data-slot="import-link" target="_blank" rel="noopener noreferrer">Open Import tab ↗</a>
+          <p class="hint" data-slot="import-setup" hidden>Run upgrade in Apps Script to create the Import tab.</p>
+          <div class="feedback" data-feedback role="status" aria-live="polite" hidden></div>
+          <button class="secondary" data-action="import">Import from Sheet</button>
+        </section>
+        <a class="sheet-link" data-slot="sheet-link" target="_blank" rel="noopener noreferrer">Open Google Sheet ↗</a>
+      </section>
+    </template>
+    <?!= include_('Client'); ?>
+  </body>
+</html>

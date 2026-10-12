@@ -1,0 +1,63 @@
+# Agent context and working notes stay local; publish only the project README.
+*.md
+*.markdown
+!/README.md
+docs/
+.agents/
+.codex/
+.claude/
+.cursor/
+
+# Dependencies and generated outputs
+node_modules/
+coverage/
+dist/
+.cache/
+.npm/
+tmp/
+temp/
+*.log
+*.zip
+*.tgz
+*.tsbuildinfo
+
+# Operating system and editor files
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+# Local project mapping and OAuth credentials
+.clasp.json
+.clasp.*.json
+!.clasp.example.json
+.clasprc*
+
+# Secrets, exported properties, account data and local backups
+.env
+.env.*
+secrets/
+private/
+local/
+backups/
+*credentials*.json
+*service-account*.json
+*token*.json
+*properties*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.xlsx
+*.xls
+*.csv
+*.tsv
+# Keep reusable import templates, never real question lists, in this folder.
+!templates/*.csv
